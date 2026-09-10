@@ -20,8 +20,10 @@
 #   ./scripts/dev-stack.sh menu [dir]  # same as above
 #   ./scripts/dev-stack.sh install     # install + link every workspace from the repo root (pnpm install)
 #   ./scripts/dev-stack.sh docker-up   # macOS only: launch Docker Desktop, wait for the daemon
-#   ./scripts/dev-stack.sh up [dir]    # start the stack (LocalNet, DAR, wallet-service, bootstrap, dApp)
-#   ./scripts/dev-stack.sh down [dir]  # stop wallet-service + the dApp dev server, stop the LocalNet
+#   ./scripts/dev-stack.sh up [dir]    # start the vesting stack (LocalNet, DAR, wallet-service, bootstrap, dApp)
+#   ./scripts/dev-stack.sh vault-up [dir]   # start the vault stack (vendored DARs, operator, dApp on 3013)
+#   ./scripts/dev-stack.sh down [dir]  # stop every dev server and the operator, stop the LocalNet
+#   ./scripts/dev-stack.sh vault-down [dir] # the same as down; see below
 #   ./scripts/dev-stack.sh docker-down # macOS only: quit Docker Desktop
 #   ./scripts/dev-stack.sh status [dir] # show what is currently running
 #
@@ -34,8 +36,18 @@
 #   4. Bootstraps the vesting operator and its factory
 #   5. dApp frontend dev server      -> http://localhost:3012  (background)
 #
-# `down` reverses 5 and 3 (kills both background processes) and stops the
-# LocalNet, keeping its volumes.
+# What `vault-up` starts instead. The vault DARs are vendored as built artifacts, so this
+# path needs no dpm and has no build step:
+#   1. LocalNet containers           (canton-barebones start)
+#   2. Deploys both vendored vault DARs
+#   3. wallet-service                -> http://localhost:3010  (background)
+#   4. Bootstraps the vault operator party, both instruments and the Vault
+#   5. vault operator                (background; the vault's own signer)
+#   6. vault dApp dev server         -> http://localhost:3013  (background)
+#
+# `down` stops every background process either stack started and stops the LocalNet, keeping
+# its volumes. `vault-down` is the same action: the two stacks share wallet-service and the
+# LocalNet, so there is nothing a vault-only teardown could safely leave running.
 
 set -euo pipefail
 
@@ -49,6 +61,10 @@ DAPP_LOG="$RUN_DIR/dapp-dev.log"
 DAPP_PID="$RUN_DIR/dapp-dev.pid"
 WS_LOG="$RUN_DIR/wallet-service.log"
 WS_PID="$RUN_DIR/wallet-service.pid"
+VAULT_LOG="$RUN_DIR/vault-dev.log"
+VAULT_PID="$RUN_DIR/vault-dev.pid"
+OPERATOR_LOG="$RUN_DIR/vault-operator.log"
+OPERATOR_PID="$RUN_DIR/vault-operator.pid"
 
 # Resolved in up(), once ./.env has been read.
 JSON_API_URL=""
@@ -74,11 +90,11 @@ LOCALNET_ARG="${2:-}"
 # is normally driven. Only a path-shaped first argument is read that way, so a mistyped
 # subcommand still fails instead of silently opening the menu.
 case "$ACTION" in
-  menu | install | docker-up | docker-down | up | down | status) ;;
+  menu | install | docker-up | docker-down | up | vault-up | down | vault-down | status) ;;
   /* | ./* | ../* | ~*) LOCALNET_ARG="$ACTION"; ACTION=menu ;;
   *)
     [ -d "$ACTION" ] \
-      || die "Usage: $0 {menu|install|docker-up|up|down|docker-down|status} [localnet-dir]"
+      || die "Usage: $0 {menu|install|docker-up|up|vault-up|down|vault-down|docker-down|status} [localnet-dir]"
     LOCALNET_ARG="$ACTION"
     ACTION=menu
     ;;
@@ -184,23 +200,7 @@ start_wallet_service() {
     || die "wallet-service is not answering on 3010 (log: $WS_LOG)."
 }
 
-up() {
-  mkdir -p "$RUN_DIR"
-
-  # A fresh clone may have no deps yet; one root install links every workspace.
-  if [ ! -d node_modules ]; then
-    install_deps
-  fi
-
-  # Docker must already be running (start it via 'docker-up', the app, or your CLI).
-  docker info >/dev/null 2>&1 \
-    || die "Docker daemon not reachable. Start Docker first (menu: docker-up, the Docker app, or your CLI), then run 'up'."
-
-  # The DAR build needs dpm; check here so a missing SDK fails before the
-  # containers come up rather than after.
-  command -v dpm >/dev/null 2>&1 \
-    || die "dpm not found on PATH. Install the DAML SDK (3.4.11), then run 'up'."
-
+prepare_env() { # ./.env, the backend token and JSON_API_URL. Shared by both stacks.
   # ./.env is wallet-service's whole configuration, the mint recipe and the DAR
   # upload token. Minting is offline, so this needs nothing running.
   [ -f .env ] || { log "Creating .env from .env.example"; cp .env.example .env; }
@@ -219,7 +219,7 @@ up() {
       | sed -E 's/^[[:space:]]*//')" || true
     [ -n "$token_line" ] \
       || die "Failed to mint CANTON_BACKEND_TOKEN. Check CANTON_AUTH_SECRET / CANTON_AUTH_AUDIENCE in .env."
-    # Replace the existing (empty) entry, else append — never print the token.
+    # Replace the existing (empty) entry, else append and never print the token.
     tmp_env="$(mktemp)"
     grep -vE '^[[:space:]]*CANTON_BACKEND_TOKEN=' .env >"$tmp_env" || true
     printf '%s\n' "$token_line" >>"$tmp_env"
@@ -235,21 +235,48 @@ up() {
   # shellcheck disable=SC1091
   source .env
   JSON_API_URL="${preset_json_api_url:-${CANTON_JSON_API_URL:-http://localhost:2975}}"
+}
 
+# The LocalNet, from the config scaffold through to its JSON API answering. Shared by both stacks,
+# because neither can deploy anything before that.
+start_localnet() {
   # Nothing about the LocalNet config is committed: it is scaffolded from the pinned
   # tool's own template, and re-scaffolded when that template moves past it.
   log "Preparing the LocalNet config in $LOCALNET_DIR..."
   node scripts/localnet-config.mjs "$LOCALNET_DIR" \
     || die "Could not prepare the LocalNet config in $LOCALNET_DIR."
 
-  # 1. LocalNet. `canton-barebones start` is `docker compose up -d`, so it returns as
+  # `canton-barebones start` is `docker compose up -d`, so it returns as
   # soon as the containers exist; Splice takes minutes more to answer, and the DAR
-  # upload below would die on a refused connection without this wait.
+  # upload would die on a refused connection without this wait.
   log "Starting the LocalNet from $LOCALNET_DIR..."
   localnet start || die "LocalNet did not start."
   log "Waiting for the app-user JSON API on $JSON_API_URL..."
   wait_for_http 300 "$JSON_API_URL/v2/version" "app-user JSON API" any \
-    || die "The LocalNet is up but its JSON API never answered. Check 'canton-barebones logs' in $LOCALNET_DIR, then run 'up' again."
+    || die "The LocalNet is up but its JSON API never answered. Check 'canton-barebones logs' in $LOCALNET_DIR, then run it again."
+}
+
+up() {
+  mkdir -p "$RUN_DIR"
+
+  # A fresh clone may have no deps yet; one root install links every workspace.
+  if [ ! -d node_modules ]; then
+    install_deps
+  fi
+
+  # Docker must already be running (start it via 'docker-up', the app, or your CLI).
+  docker info >/dev/null 2>&1 \
+    || die "Docker daemon not reachable. Start Docker first (menu: docker-up, the Docker app, or your CLI), then run 'up'."
+
+  # The DAR build needs dpm; check here so a missing SDK fails before the
+  # containers come up rather than after.
+  command -v dpm >/dev/null 2>&1 \
+    || die "dpm not found on PATH. Install the DAML SDK (3.4.11), then run 'up'."
+
+  prepare_env
+
+  # 1. LocalNet
+  start_localnet
 
   # 2. Build + deploy the DAR, which needs the participant but not wallet-service. The build
   # fetches the Splice DARs amulet-vesting data-depends on the first time, and after a Splice bump.
@@ -291,6 +318,68 @@ EOF
   echo "   Run a CIP-0103 browser wallet from its own repo (it serves on http://localhost:3011)"
 }
 
+# The vault stack. Two differences from `up`, both from the vault DARs being vendored as built
+# artifacts: nothing here needs dpm, and there is no build step. It also runs the vault operator,
+# which the vesting stack has no counterpart for.
+vault_up() {
+  mkdir -p "$RUN_DIR"
+
+  if [ ! -d node_modules ]; then
+    install_deps
+  fi
+
+  docker info >/dev/null 2>&1 \
+    || die "Docker daemon not reachable. Start Docker first (menu: docker-up, the Docker app, or your CLI), then run 'vault-up'."
+
+  prepare_env
+
+  # 1. LocalNet
+  start_localnet
+
+  # 2. Both vendored DARs. No dpm and no build: they are checked in as artifacts.
+  log "Deploying the vendored vault DARs..."
+  pnpm run deploy-vault-dars
+
+  # 3. wallet-service (3010)
+  start_wallet_service
+
+  # 4. Bootstrap, which goes through wallet-service's /rpc
+  log "Bootstrapping the vault operator party, both instruments and the Vault..."
+  pnpm run bootstrap-vault
+
+  # 5. The vault's backstage signer. After the bootstrap, because it discovers the vault once at
+  # startup and would exit against an empty ledger.
+  if pgrep -f "scripts/vault-operator.mjs" >/dev/null 2>&1; then
+    warn "A vault operator is already running; skipping."
+  else
+    log "Starting the vault operator"
+    nohup pnpm run vault-operator >"$OPERATOR_LOG" 2>&1 &
+    echo $! >"$OPERATOR_PID"
+    wait_for 30 "$OPERATOR_LOG" "polling every" "vault operator" || true
+  fi
+
+  # 6. vault dApp dev server (3013)
+  if lsof -nP -iTCP:3013 -sTCP:LISTEN >/dev/null 2>&1; then
+    warn "Port 3013 already in use; skipping the vault dev server."
+  else
+    log "Starting the vault dApp dev server -> http://localhost:3013"
+    nohup pnpm run vault:dev >"$VAULT_LOG" 2>&1 &
+    echo $! >"$VAULT_PID"
+    wait_for 60 "$VAULT_LOG" "ready in|localhost:3013" "vault dev server" || true
+  fi
+
+  echo
+  log "Vault stack is up:"
+  cat <<EOF
+   wallet-service          http://localhost:3010   (log: $WS_LOG)
+   vault dApp              http://localhost:3013   (log: $VAULT_LOG)
+   vault operator          (log: $OPERATOR_LOG)
+   app-user JSON API       $JSON_API_URL
+EOF
+  echo "   Run a CIP-0103 browser wallet from its own repo (it serves on http://localhost:3011)"
+  echo "   After a LocalNet reset, re-onboard the wallet account against http://localhost:3010/rpc"
+}
+
 stop_pidfile() { # stop_pidfile <pidfile> <label>
   local pidfile="$1" label="$2" pid
   if [ -f "$pidfile" ]; then
@@ -305,11 +394,19 @@ stop_pidfile() { # stop_pidfile <pidfile> <label>
   fi
 }
 
+# One teardown for both stacks, because they share wallet-service and the LocalNet: stopping only
+# the vault's own processes would leave a half-stack that `status` then reports as running.
 down() {
   # 1. Background processes
   stop_pidfile "$DAPP_PID" "dApp dev server"
-  # Belt-and-suspenders: kill any stray vite on our port.
-  pkill -f "vite --host localhost --port 3012" 2>/dev/null || true
+  stop_pidfile "$VAULT_PID" "vault dev server"
+  # Belt-and-suspenders for a dev server this script did not start, and so has no pidfile for.
+  # The pattern cannot be `vite --host`: pnpm runs it as `vite.js -- --host`, so the two words are
+  # never adjacent on the command line.
+  pkill -f "vite.*--port 3012" 2>/dev/null || true
+  pkill -f "vite.*--port 3013" 2>/dev/null || true
+  stop_pidfile "$OPERATOR_PID" "vault operator"
+  pkill -f "scripts/vault-operator.mjs" 2>/dev/null || true
   stop_pidfile "$WS_PID" "wallet-service"
   pkill -f "canton-wallet-service" 2>/dev/null || true
 
@@ -324,9 +421,9 @@ down() {
   fi
 
   echo
-  log "Dev-server ports 3010-3012:"
-  if lsof -nP -iTCP:3010-3012 -sTCP:LISTEN >/dev/null 2>&1; then
-    lsof -nP -iTCP:3010-3012 -sTCP:LISTEN | awk 'NR>1{print "   "$1, $9}'
+  log "Dev-server ports 3010-3013:"
+  if lsof -nP -iTCP:3010-3013 -sTCP:LISTEN >/dev/null 2>&1; then
+    lsof -nP -iTCP:3010-3013 -sTCP:LISTEN | awk 'NR>1{print "   "$1, $9}'
   else
     echo "   (all free)"
   fi
@@ -338,14 +435,15 @@ menu() {
   fi
 
   # Display label per item; `keys` is the matching action dispatched on select.
-  local keys=(install docker-up docker-down up down quit)
-  local labels=("Install" "Docker up" "Docker down" "Stack up" "Stack down" "Quit")
+  local keys=(install docker-up docker-down up vault-up down quit)
+  local labels=("Install" "Docker up" "Docker down" "Vesting up" "Vault up" "Stack down" "Quit")
   local descs=(
     "install + link every workspace"
     "start Docker Desktop (macOS)"
     "quit Docker Desktop (macOS)"
-    "start LocalNet, deploy DAR, wallet-service, bootstrap, dApp"
-    "stop wallet-service + dApp dev server, stop the LocalNet"
+    "LocalNet, build+deploy DAR, wallet-service, bootstrap, dApp on 3012"
+    "LocalNet, vendored DARs, wallet-service, bootstrap, operator, dApp on 3013"
+    "stop every dev server and the operator, stop the LocalNet"
     "exit"
   )
   local n=${#keys[@]} sel=0 key rest i num choice
@@ -398,6 +496,7 @@ menu() {
       docker-up)   ( docker_up ) || warn "docker-up did not finish cleanly" ;;
       docker-down) ( docker_down ) || warn "docker-down did not finish cleanly" ;;
       up)          ( up ) || warn "up did not finish cleanly (see output above)" ;;
+      vault-up)    ( vault_up ) || warn "vault-up did not finish cleanly (see output above)" ;;
       down)        ( down ) || warn "down did not finish cleanly" ;;
     esac
     printf '\n  \033[2mPress Enter to return to the menu...\033[0m'
@@ -416,9 +515,9 @@ status() {
   else
     echo "   (docker daemon not running)"
   fi
-  log "Dev-server ports 3010-3012:"
-  if lsof -nP -iTCP:3010-3012 -sTCP:LISTEN >/dev/null 2>&1; then
-    lsof -nP -iTCP:3010-3012 -sTCP:LISTEN | awk 'NR>1{print "   "$1, $9}'
+  log "Dev-server ports 3010-3013:"
+  if lsof -nP -iTCP:3010-3013 -sTCP:LISTEN >/dev/null 2>&1; then
+    lsof -nP -iTCP:3010-3013 -sTCP:LISTEN | awk 'NR>1{print "   "$1, $9}'
   else
     echo "   (none)"
   fi
@@ -429,7 +528,9 @@ case "$ACTION" in
   install)     install_deps ;;
   docker-up)   docker_up ;;
   up)          up ;;
+  vault-up)    vault_up ;;
   down)        down ;;
+  vault-down)  down ;;
   docker-down) docker_down ;;
   status)      status ;;
 esac
