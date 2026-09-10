@@ -4,6 +4,7 @@ packages:
   - canton-theme
   - dapp/daml
   - dapp/frontend
+  - vault-dapp
 
 # Dependencies allowed to run install/build scripts (pnpm blocks them by default).
 # esbuild: needed by Vite/tsx. puppeteer (via @mermaid-js/mermaid-cli): blocked so

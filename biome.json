@@ -13,6 +13,7 @@
       "canton-dappbooster/**",
       "canton-theme/**",
       "dapp/frontend/**",
+      "vault-dapp/**",
       "scripts/**",
       "!**/api-specs",
       "!**/*.svg"
@@ -62,7 +63,7 @@
       }
     },
     {
-      "includes": ["dapp/frontend/**"],
+      "includes": ["dapp/frontend/**", "vault-dapp/**"],
       "css": {
         "parser": {
           "cssModules": false,
@@ -109,7 +110,7 @@
       }
     },
     {
-      "includes": ["dapp/frontend/**"],
+      "includes": ["dapp/frontend/**", "vault-dapp/**"],
       "linter": {
         "rules": {
           "style": {
@@ -171,7 +172,13 @@
       }
     },
     {
-      "includes": ["dapp/frontend/src/**", "!**/*.test.ts", "!**/*.test.tsx", "!**/testing/**"],
+      "includes": [
+        "dapp/frontend/src/**",
+        "vault-dapp/src/**",
+        "!**/*.test.ts",
+        "!**/*.test.tsx",
+        "!**/testing/**"
+      ],
       "linter": {
         "rules": {
           "style": {
