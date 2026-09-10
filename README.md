@@ -1,13 +1,14 @@
 # Canton dAppBooster
 
-Local Canton development stack.
+Local Canton development stack, with two demo apps over it: a Canton Coin vesting dApp
+(`dapp/frontend`, port 3012) and a token vault dApp (`vault-dapp`, port 3013).
 
 ## Requirements
 
 - Node 24 (>=24.15.0)
 - pnpm 11.22.0
 - Docker
-- dpm (DAML SDK 3.4.11)
+- dpm (DAML SDK 3.4.11), only to build the vesting DAR. The vault dApp ships its DARs built.
 
 ## Initial setup
 
@@ -30,6 +31,9 @@ To run it from another folder you can use this:
 ```bash
 ./scripts/dev-stack.sh ~/path-to-your-folder
 ```
+
+The menu starts either app: `up` brings up the vesting stack, `vault-up` the vault one. Both share
+the LocalNet and wallet-service, so `down` stops everything.
 
 ## Starting the stack, step by step
 
@@ -123,3 +127,43 @@ App runs on http://localhost:3012 by default.
 A compatible CIP-0103 wallet (like the [Carpincho development wallet](https://github.com/BootNodeDev/carpincho-wallet)) is required to connect to the demo.
 
 Point the wallet at http://localhost:3010/rpc, create at least 2 accounts, connect and try [the demo](https://demo.dappbooster.cc/).
+
+## The vault dApp, step by step
+
+Same Docker, env vars, LocalNet and wallet-service steps as above. The vault's Daml lives in
+[canton-token-forge](https://github.com/BootNodeDev/canton-token-forge) and its DARs are vendored
+built under `vault-dapp/vendor/`, so this path replaces the build and deploy step and needs no dpm.
+
+### Deploy the vendored DARs
+
+```bash
+pnpm run deploy-vault-dars
+```
+
+### Bootstrap
+
+Creates the issuer and vault parties, both instruments and the Vault itself.
+
+```bash
+pnpm run bootstrap-vault
+```
+
+**Note:** Both steps are only needed the first time. Run them again if LocalNet is reset.
+
+### Vault operator
+
+The vault party is participant-hosted, not a wallet account, so a backstage poller settles what the
+browser proposes. Leave it running.
+
+```bash
+pnpm run vault-operator
+```
+
+### Vault app
+
+```bash
+pnpm run vault:dev
+```
+
+App runs on http://localhost:3013 by default. Connect the same CIP-0103 wallet, pointed at
+http://localhost:3010/rpc.

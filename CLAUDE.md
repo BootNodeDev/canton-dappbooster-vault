@@ -10,6 +10,7 @@ Each subproject can layer its own `CLAUDE.md` for stack-specific deltas:
 - [`canton-dappbooster/CLAUDE.md`](canton-dappbooster/CLAUDE.md) — L2 component authoring and file layout
 - [`canton-theme/CLAUDE.md`](canton-theme/CLAUDE.md) — L3 `--cnc-*` token naming convention
 - [`dapp/frontend/CLAUDE.md`](dapp/frontend/CLAUDE.md) — app layout and naming deltas; its seams are in [`dapp/frontend/architecture.md`](dapp/frontend/architecture.md)
+- [`vault-dapp/CLAUDE.md`](vault-dapp/CLAUDE.md) — the vault dApp's ledger-read seam, template-id spellings and the participant-hosted vault party
 - `dapp/daml/` — see its `README.md`
 
 The dApp connects through any CIP-0103 browser wallet; no wallet lives in this monorepo. This stack
@@ -40,6 +41,7 @@ Current distribution:
 | root | yes | shim | yes | yes | Canonical repo rules and cross-component seams. |
 | `canton-connect/` | yes | shim | yes | yes, plus `architecture/` | Public hook API, the machine-owned lifecycle, the picker/adapter seams; chapters for the connection machine and the popup close guard. |
 | `dapp/frontend/` | yes | shim | yes | yes | Canton Coin vesting dApp; `CLAUDE.md` carries the page-owns-its-components layout and the naming rules an agent would otherwise get wrong, architecture.md its internal seams. Carries a `PROVENANCE.md` recording the vendored source. |
+| `vault-dapp/` | yes | shim | yes | no | Token vault dApp; `CLAUDE.md` carries the ledger-read seam, the two template-id spellings and the rule that nothing here submits as the vault, all of which an agent would otherwise get wrong. No architecture.md: it is built to `dapp/frontend`'s shape and adds no subsystem of its own. Carries a `vendor/PROVENANCE.md` recording the two built DARs. |
 | `dapp/daml/` | yes | no | no | no | Single DAML package (`amulet-vesting`), vendored source, built here. Carries a `PROVENANCE.md` recording the source commit and the two integration deltas. |
 | `canton-dappbooster/` | yes | shim | yes | yes | L2 headless components; `CLAUDE.md` carries the folder-per-component layout an agent would otherwise get wrong, architecture.md the authoring seam (anatomy contract, L2/L3 split, Zag boundary). |
 | `canton-theme/` | yes | shim | yes | no | Plain-CSS theme (L3); README covers the two CSS exports, `CLAUDE.md` the `--cnc-*` naming convention an agent adding a token would otherwise invent. |
@@ -63,12 +65,12 @@ A README may state that a contract exists and link to it. It may not restate it.
 |----------|-----------|-------|
 | Languages | TypeScript, DAML, Bash | TypeScript across the JS subprojects; DAML in `dapp/daml/`; Bash and Node for the root `scripts/` |
 | Package manager | pnpm workspaces | Single root `pnpm-lock.yaml`; one root `pnpm install` links every workspace. Workspace layout + overrides live in `pnpm-workspace.yaml`. Root `package.json` orchestrates scripts via `pnpm -C <dir>` |
-| Node | 24 | Exact version pinned via root `.nvmrc`; inherits to every Node subproject. Root and the four Node subprojects all declare `engines.node` at `>=24.15.0`, which is what jsdom 30 requires |
+| Node | 24 | Exact version pinned via root `.nvmrc`; inherits to every Node subproject. Root and the five Node subprojects all declare `engines.node` at `>=24.15.0`, which is what jsdom 30 requires |
 | Container runtime | Docker | Required by the `@bootnodedev/canton-barebones` LocalNet; nothing in this repository builds an image |
 | LocalNet | @bootnodedev/canton-barebones | Pinned exact in root devDependencies and reached through `pnpm exec canton-barebones`, so the version is the one in `package.json`. Nothing about its config is committed: `scripts/localnet-config.mjs` scaffolds the gitignored `.canton-localnet/` from the tool's own template and turns on `validators.appUser.ui` and `sv.scanUI`, without which nginx serves no `/api/validator` or `/api/scan`. The Splice checkout and the runtime env land in `.canton-localnet/.generated/` |
 | Commit linting | commitlint + husky | Enforced via root `.husky/commit-msg` |
 | Lint / format | Biome | One root `biome.json` and a single root `@biomejs/biome`; per-project specifics live in `overrides`. No per-subproject Biome install or config. `pnpm lint` = `biome check --error-on-warnings` (warnings fail); standalone SVG assets are excluded |
-| Pre-commit | lint-staged | Two passes from `.husky/pre-commit`, because only the first writes: `.lintstagedrc.format.mjs` runs root Biome (`biome check --write`) across `canton-connect/`, `canton-dappbooster/`, `canton-theme/`, `dapp/frontend/` and `scripts/`, then `.lintstagedrc.mjs` runs the read-only gates — the tests, the doc check and the anatomy check — concurrently. One pass would let a reformat land mid-parse |
+| Pre-commit | lint-staged | Two passes from `.husky/pre-commit`, because only the first writes: `.lintstagedrc.format.mjs` runs root Biome (`biome check --write`) across `canton-connect/`, `canton-dappbooster/`, `canton-theme/`, `dapp/frontend/`, `vault-dapp/` and `scripts/`, then `.lintstagedrc.mjs` runs the read-only gates — the tests, the doc check and the anatomy check — concurrently. One pass would let a reformat land mid-parse |
 | Pre-push | tsc | Root `.husky/pre-push` runs `pnpm typecheck` (`pnpm -r run --if-present typecheck`, i.e. `tsc` in each Node subproject that defines it) |
 | Secret scanning | gitleaks | Shared `.husky/gitleaks.sh` runs gitleaks in the pre-commit (staged diff) and pre-push (outgoing range) hooks; the pinned version (`.gitleaks-version`) is installed by `scripts/install-gitleaks.sh`, so local and CI use the same rules. Accepted non-secret findings live in `.gitleaksignore` |
 | Dead code | knip | Root `knip.json` + `pnpm knip`; gates unused files/dependencies/exports. `@canton-network/*` ignored |
@@ -86,6 +88,7 @@ A README may state that a contract exists and link to it. It may not restate it.
 |------|---------|-------|------|
 | [`dapp/daml/`](dapp/daml/) | `amulet-vesting` DAML model: factory, proposal, contract, residual claim, escrowing Canton Coin as a Splice `LockedAmulet`. Vendored from [cc-vesting-contracts](https://github.com/BootNodeDev/cc-vesting-contracts), where its scenarios stay | DAML | n/a (DAR artifact) |
 | [`dapp/frontend/`](dapp/frontend/) | Canton Coin vesting dApp over the local participant. Every read and write goes through the connected CIP-0103 wallet via `canton-connect`; the operator's factory, the `AmuletRules` and the open mining round all arrive by explicit disclosure. Imported from `cn-dappbooster@feat/vesting-lite` (see its `PROVENANCE.md`). | Vite + React + Ark UI + lucide-react + Tailwind v4 + zustand + react-router + Biome | 3012 |
+| [`vault-dapp/`](vault-dapp/) | Token vault dApp: deposit an underlying CIP-0056 token, get shares, return the shares, get the underlying back. Drives the `canton-token-vault` Daml package, whose built DARs are vendored under `vault-dapp/vendor/`; nothing here compiles Daml. The vault party is participant-hosted and driven by `scripts/vault-operator.mjs`, never by the browser | Vite + React + Ark UI + lucide-react + Tailwind v4 + zustand + react-router + Biome | 3013 |
 | [`canton-connect/`](canton-connect/) | wagmi-style React hooks wrapping the `dapp-sdk` facade; the SDK owns discovery, the picker, the session and the transports | TypeScript + React 19 + xstate 5 + Biome | n/a (library) |
 | [`canton-dappbooster/`](canton-dappbooster/) | L2 headless UI components for Canton dApps (tsdown-built, zero styling), plus the light/dark/system theme runtime that drives `data-theme`, plus the pure utilities the components are built on, the exact-decimal amount ones included. Styling lives in `canton-theme`. `src/index.ts` is the public API; `src/connect.ts` is the `/connect` sub-path, holding the components that read the wallet session so the main barrel stays free of the Canton SDK. | TypeScript + React 19 + tsdown + vitest + Biome | n/a (library) |
 | [`canton-theme/`](canton-theme/) | L3 plain-CSS theme for the kit: `--cnc-*` tokens + prestyled defaults, consumed by importing its CSS. | CSS | n/a (library) |
@@ -174,7 +177,7 @@ Placement:
 - **A module has one legal spelling, and it is never relative.** `./utils/toast` and
   `@/utils/toast` both resolved, so which one landed was down to who or what wrote the file.
   Relative specifiers (`.`, `..`, `./*`, `../*`) are now a Biome error in `dapp/frontend`,
-  `canton-dappbooster`, and `canton-connect`, in all four positions: `import … from`,
+  `vault-dapp`, `canton-dappbooster`, and `canton-connect`, in all four positions: `import … from`,
   `export … from`, `export *`, and dynamic `import()`.
   - The app reaches an intra-`src` module through `@/`, wired in `tsconfig.app.json` and
     `vite.config.ts`. The one suppression in the repo is `vite.config.ts` itself, which defines that
@@ -336,7 +339,7 @@ package, because only `canton-dappbooster` splits markup from styles across a pa
 
 - Use **pnpm** only (never npm or yarn).
 - This is a pnpm workspaces monorepo: one `pnpm install` from the repo root installs and links every package. There is no per-package install step.
-- Run a subproject script either by `cd <subproject>` or by using `pnpm -C <subproject> run <script>`. The root `package.json` is the whole local loop, in order: `mint-token`, `build-dar`, `deploy-dar -- <dar>`, `bootstrap`, `app:dev`. Docs and `dev-stack.sh` use those names, not the underlying commands, so the implementation can move without a doc sweep. There is no `format` script anywhere: `lint:fix` is `biome check --write`, which formats too.
+- Run a subproject script either by `cd <subproject>` or by using `pnpm -C <subproject> run <script>`. The root `package.json` is the whole local loop, in order: `mint-token`, `build-dar`, `deploy-dar -- <dar>`, `bootstrap`, `app:dev`. The vault stack is the same loop with the build step gone, since its DARs are vendored as artifacts: `mint-token`, `deploy-vault-dars`, `bootstrap-vault`, `vault-operator`, `vault:dev`, with `vendor-vault-dars` the only script needing dpm and a `canton-token-forge` checkout. Docs and `dev-stack.sh` use those names, not the underlying commands, so the implementation can move without a doc sweep. There is no `format` script anywhere: `lint:fix` is `biome check --write`, which formats too.
 - **The LocalNet is not in this repository, and neither is its config.** It is
   `@bootnodedev/canton-barebones`, a pinned devDependency driven with `start` / `stop` / `reset` in
   the directory holding `canton-barebones.config.json`. `up` scaffolds that directory itself through
@@ -345,6 +348,9 @@ package, because only `canton-dappbooster` splits markup from styles across a pa
   argument (which also opens the menu, the normal way to drive the stack), else a second argument
   after the subcommand, else `CANTON_LOCALNET_DIR`. The CLI reads its config from its own cwd and
   writes the Splice checkout and the runtime env beside it, under `.generated/`.
+- **`scripts/dev-stack.sh` drives two stacks over one LocalNet**: `up` for the vesting dApp on
+  3012, `vault-up` for the vault dApp on 3013 plus the vault operator. They share `.env`, the
+  LocalNet and wallet-service, which is why `vault-down` is `down` rather than a partial teardown.
 - **`scripts/localnet-config.mjs` owns the two flags the stack cannot run without**
   (`validators.appUser.ui`, `sv.scanUI`) and re-scaffolds from the installed template whenever that
   template moves past the local copy — a new config version, which every command would otherwise
@@ -387,6 +393,7 @@ See [`architecture.md`](architecture.md) for the system shape, subproject layout
     reached through `canton-connect` touches DOM globals on import)
   - `canton-connect`: `pnpm test` (vitest + jsdom)
   - `canton-dappbooster`: `pnpm test` (vitest + jsdom + Testing Library)
+  - `vault-dapp`: `pnpm test` (vitest + jsdom), covering its pure logic only, as `dapp/frontend`'s does
   - root `scripts/`: covered by the root `pnpm test`, which appends
     `node --test "scripts/*.test.mjs"` to the fan-out because `pnpm -r` skips the root package
 - Kit components are tested inside `canton-dappbooster` (vitest + jsdom). `dapp/frontend`'s vitest run covers its pure logic wherever that lives; component/DOM behaviour and app+kit integration are out of scope there.
