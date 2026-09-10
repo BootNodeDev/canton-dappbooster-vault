@@ -4,8 +4,23 @@ import { sumHoldings } from '#src/utils/sumHoldings'
 const amulet = { admin: 'DSO::1220ab', id: 'Amulet' }
 const other = { admin: 'circle::1220cd', id: 'USDC' }
 
-const free = (amount: string, instrumentId = amulet) => ({ amount, instrumentId, isLocked: false })
-const locked = (amount: string, instrumentId = amulet) => ({ amount, instrumentId, isLocked: true })
+let nth = 0
+const nextCid = (): string => {
+  nth += 1
+  return `00cid${nth}`
+}
+const free = (amount: string, instrumentId = amulet) => ({
+  amount,
+  contractId: nextCid(),
+  instrumentId,
+  isLocked: false,
+})
+const locked = (amount: string, instrumentId = amulet) => ({
+  amount,
+  contractId: nextCid(),
+  instrumentId,
+  isLocked: true,
+})
 
 describe('sumHoldings', () => {
   it('sums the contracts of one instrument into one row', () => {

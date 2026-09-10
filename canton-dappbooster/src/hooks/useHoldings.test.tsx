@@ -24,8 +24,17 @@ const view = (instrumentId: typeof amulet, amount: string, lock: unknown = null)
   viewValue: { owner: party.partyId, instrumentId, amount, lock },
 })
 
+let nth = 0
+const nextCid = (): string => {
+  nth += 1
+  return `00cid${nth}`
+}
 const row = (...views: unknown[]) => ({
-  contractEntry: { JsActiveContract: { createdEvent: { interfaceViews: views } } },
+  contractEntry: {
+    JsActiveContract: {
+      createdEvent: { contractId: nextCid(), interfaceViews: views },
+    },
+  },
 })
 
 const session = (ledgerApi: LedgerApi, usable = true) => ({
@@ -53,10 +62,14 @@ describe('useHoldings', () => {
     const { result } = renderHook(() => useHoldings(), session(ledgerApi))
 
     await waitFor(() => expect(result.current.holdings).toHaveLength(2))
+    // The contract id is what a transfer or an allocation names as its input, so it travels with
+    // the amount rather than being read again by the caller.
     expect(result.current.holdings).toEqual([
-      { amount: '10.5', instrumentId: amulet, isLocked: false },
-      { amount: '4', instrumentId: amulet, isLocked: false },
+      { amount: '10.5', contractId: expect.any(String), instrumentId: amulet, isLocked: false },
+      { amount: '4', contractId: expect.any(String), instrumentId: amulet, isLocked: false },
     ])
+    const [first, second] = result.current.holdings ?? []
+    expect(first?.contractId).not.toBe(second?.contractId)
     expect(result.current.error).toBeUndefined()
   })
 
