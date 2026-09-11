@@ -37,3 +37,6 @@ backstage poller acts as. The browser only ever submits as the connected account
 
 Nothing is configured. The vault, both instruments and every disclosure this app sends are read off
 the ledger each time it loads, so a re-bootstrap cannot leave a stale pointer behind.
+
+The internal seams, the discovery load and the two settlement choreographies are in
+[`architecture.md`](architecture.md).
