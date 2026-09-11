@@ -10,7 +10,7 @@ Each subproject can layer its own `CLAUDE.md` for stack-specific deltas:
 - [`canton-dappbooster/CLAUDE.md`](canton-dappbooster/CLAUDE.md) — L2 component authoring and file layout
 - [`canton-theme/CLAUDE.md`](canton-theme/CLAUDE.md) — L3 `--cnc-*` token naming convention
 - [`dapp/frontend/CLAUDE.md`](dapp/frontend/CLAUDE.md) — app layout and naming deltas; its seams are in [`dapp/frontend/architecture.md`](dapp/frontend/architecture.md)
-- [`vault-dapp/CLAUDE.md`](vault-dapp/CLAUDE.md) — the vault dApp's ledger-read seam, template-id spellings and the participant-hosted vault party; its seams are in [`vault-dapp/architecture.md`](vault-dapp/architecture.md)
+- [`vault-dapp/CLAUDE.md`](vault-dapp/CLAUDE.md) — the vault dApp's ledger-read seam, template-id spellings and the participant-hosted vault party; its seams are in [`vault-dapp/ARCHITECTURE.md`](vault-dapp/ARCHITECTURE.md)
 - `dapp/daml/` — see its `README.md`
 
 The dApp connects through any CIP-0103 browser wallet; no wallet lives in this monorepo. This stack
@@ -41,7 +41,7 @@ Current distribution:
 | root | yes | shim | yes | yes | Canonical repo rules and cross-component seams. |
 | `canton-connect/` | yes | shim | yes | yes, plus `architecture/` | Public hook API, the machine-owned lifecycle, the picker/adapter seams; chapters for the connection machine and the popup close guard. |
 | `dapp/frontend/` | yes | shim | yes | yes | Canton Coin vesting dApp; `CLAUDE.md` carries the page-owns-its-components layout and the naming rules an agent would otherwise get wrong, architecture.md its internal seams. Carries a `PROVENANCE.md` recording the vendored source. |
-| `vault-dapp/` | yes | shim | yes | yes | Token vault dApp; `CLAUDE.md` carries the ledger-read seam, the two template-id spellings and the rule that nothing here submits as the vault, all of which an agent would otherwise get wrong. architecture.md carries what the shared shape does not: the deposit and withdraw choreographies are a handoff between the browser and the participant-hosted vault party, neither of which can complete one alone. Carries a `vendor/PROVENANCE.md` recording the two built DARs. |
+| `vault-dapp/` | yes | shim | yes | yes, as `ARCHITECTURE.md` | Token vault dApp; `CLAUDE.md` carries the ledger-read seam, the two template-id spellings and the rule that nothing here submits as the vault, all of which an agent would otherwise get wrong. `ARCHITECTURE.md` carries what the shared shape does not: the deposit and withdraw choreographies are a handoff between the browser and the participant-hosted vault party, neither of which can complete one alone. Carries a `vendor/PROVENANCE.md` recording the two built DARs. |
 | `dapp/daml/` | yes | no | no | no | Single DAML package (`amulet-vesting`), vendored source, built here. Carries a `PROVENANCE.md` recording the source commit and the two integration deltas. |
 | `canton-dappbooster/` | yes | shim | yes | yes | L2 headless components; `CLAUDE.md` carries the folder-per-component layout an agent would otherwise get wrong, architecture.md the authoring seam (anatomy contract, L2/L3 split, Zag boundary). |
 | `canton-theme/` | yes | shim | yes | no | Plain-CSS theme (L3); README covers the two CSS exports, `CLAUDE.md` the `--cnc-*` naming convention an agent adding a token would otherwise invent. |

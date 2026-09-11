@@ -39,4 +39,4 @@ Nothing is configured. The vault, both instruments and every disclosure this app
 the ledger each time it loads, so a re-bootstrap cannot leave a stale pointer behind.
 
 The internal seams, the discovery load and the two settlement choreographies are in
-[`architecture.md`](architecture.md).
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
